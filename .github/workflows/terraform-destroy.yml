@@ -1,0 +1,189 @@
+# Terraform Destroy Pipeline
+name: 'Terraform Destroy Pipeline'
+
+env:
+  TERRAFORM_VERSION: 'latest'
+
+on:
+  # Manual trigger only for destroy operations
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Destroy action to perform'
+        required: true
+        default: 'destroy-plan'
+        type: choice
+        options:
+        - destroy-plan
+        - destroy
+      target_dir:
+        description: 'Environment to destroy (leave empty for all)'
+        required: false
+        type: string
+      environments_dir:
+        description: 'Environments directory'
+        required: false
+        default: 'environments'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  # Find available environments dynamically
+  discover:
+    name: 'Discover Environments'
+    runs-on: ubuntu-latest
+    outputs:
+      environments: ${{ steps.get-envs.outputs.environments }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Get environments
+      id: get-envs
+      shell: bash
+      run: |
+        envs=$(ls -1 ${{ github.event.inputs.environments_dir || 'environments' }}/ | jq -R -s -c 'split("\n")[:-1]')
+        echo "environments=$envs" >> $GITHUB_OUTPUT
+        echo "🔍 Discovered environments:"
+        echo "$envs" | jq -r '.[]' | sed 's/^/  - /'
+
+  # Validate Terraform before destroy
+  terraform-validate:
+    name: 'Validate ${{ matrix.target_dir }}'
+    runs-on: ubuntu-latest
+    needs: discover
+    if: github.event_name == 'workflow_dispatch'
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        target_dir: ${{ github.event.inputs.target_dir != '' && fromJson(format('["{}"]', github.event.inputs.target_dir)) || fromJson(needs.discover.outputs.environments) }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ vars.AWS_REGION }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+    - name: Terraform Init
+      run: |
+        set -e
+        terraform init -input=false
+      working-directory: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+
+    - name: Terraform Validate
+      run: |
+        set -e
+        terraform validate
+      working-directory: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+
+  # Generate destroy plan
+  terraform-destroy-plan:
+    name: 'Destroy Plan ${{ matrix.target_dir }}'
+    runs-on: ubuntu-latest
+    needs: [discover, terraform-validate]
+    # Run on destroy-plan or destroy action
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      (github.event.inputs.action == 'destroy-plan' || github.event.inputs.action == 'destroy')
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        target_dir: ${{ github.event.inputs.target_dir != '' && fromJson(format('["{}"]', github.event.inputs.target_dir)) || fromJson(needs.discover.outputs.environments) }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ vars.AWS_REGION }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+    - name: Terraform Init
+      run: |
+        set -e
+        terraform init -input=false
+      working-directory: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+
+    - name: Terraform Destroy Plan
+      run: |
+        set -e
+        terraform plan -destroy -out=destroy-plan
+      working-directory: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+
+    # Save destroy plan for destroy job
+    - name: Upload Destroy Plan
+      uses: actions/upload-artifact@v4
+      with:
+        name: terraform-destroy-plan-${{ matrix.target_dir }}
+        path: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}/destroy-plan
+
+  # Execute destroy (manual only)
+  terraform-destroy:
+    name: 'Destroy ${{ matrix.target_dir }}'
+    runs-on: ubuntu-latest
+    needs: [discover, terraform-destroy-plan]
+    # Only run on manual destroy action
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.action == 'destroy'
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        target_dir: ${{ github.event.inputs.target_dir != '' && fromJson(format('["{}"]', github.event.inputs.target_dir)) || fromJson(needs.discover.outputs.environments) }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # Get destroy plan from previous job
+    - name: Download Destroy Plan
+      uses: actions/download-artifact@v4
+      with:
+        name: terraform-destroy-plan-${{ matrix.target_dir }}
+        path: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ vars.AWS_REGION }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+    - name: Terraform Init
+      run: |
+        set -e
+        terraform init -input=false
+      working-directory: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+
+    - name: Terraform Destroy
+      run: |
+        set -e
+        terraform apply -input=false destroy-plan
+      working-directory: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
