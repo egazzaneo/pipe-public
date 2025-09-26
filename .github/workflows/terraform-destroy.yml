@@ -14,58 +14,46 @@ on:
         - destroy-plan
         - destroy
       target:
-        description: 'Environment to destroy (leave empty for all)'
+        description: 'Target to destroy (leave empty for all)'
         required: false
-        type: string
-      environments_dir:
-        description: 'Environments directory'
-        required: false
-        default: 'environments'
-        type: string
-      terraform_version:
-        description: 'Terraform version'
-        required: false
-        default: 'latest'
         type: string
 
 permissions:
   contents: read
 
+env:
+  TARGETS_DIR: 'environments'
+  TERRAFORM_VERSION: 'latest'
+
 jobs:
-  # Find available environments dynamically
+  # Find available targets dynamically
   discover:
-    name: 'Discover Environments'
+    name: 'Discover Targets'
     runs-on: ubuntu-latest
     outputs:
       target_array: ${{ steps.get-target.outputs.target_array }}
-      environments_dir: ${{ steps.get-target.outputs.environments_dir }}
+      targets_dir: ${{ steps.get-target.outputs.targets_dir }}
     steps:
     - name: Checkout
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
-    - name: Get environments
-      id: get-envs
-      shell: bash
-      run: |
-        ENVS_DIR="${{ github.event.inputs.environments_dir || 'environments' }}"
-        envs=$(ls -1 $ENVS_DIR/ | jq -R -s -c 'split("\n")[:-1]')
-        echo "environments=$envs" >> $GITHUB_OUTPUT
-        echo "🔍 Discovered environments:"
-        echo "$envs" | jq -r '.[]' | sed 's/^/  - /'
-
-    - name: Get target array
+    - name: Get targets
       id: get-target
       shell: bash
       run: |
-        ENVS_DIR="${{ github.event.inputs.environments_dir || 'environments' }}"
+        TARGETS_DIR="${{ env.TARGETS_DIR }}"
         if [ -n "${{ github.event.inputs.target }}" ]; then
+          echo "🎯 Target: ${{ github.event.inputs.target }}"
           echo "target_array=[\"${{ github.event.inputs.target }}\"]" >> $GITHUB_OUTPUT
         else
-          echo "target_array=${{ steps.get-envs.outputs.environments }}" >> $GITHUB_OUTPUT
+          targets=$(ls -1 $TARGETS_DIR/ | jq -R -s -c 'split("\n")[:-1]')
+          echo "🔍 Discovered targets:"
+          echo "$targets" | jq -r '.[]' | sed 's/^/  - /'
+          echo "target_array=$targets" >> $GITHUB_OUTPUT
         fi
-        echo "environments_dir=$ENVS_DIR" >> $GITHUB_OUTPUT
+        echo "targets_dir=$TARGETS_DIR" >> $GITHUB_OUTPUT
 
   # Validate Terraform before destroy
   terraform-validate:
@@ -92,19 +80,19 @@ jobs:
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
       with:
-        terraform_version: ${{ github.event.inputs.terraform_version || 'latest' }}
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
 
     - name: Terraform Init
       run: |
         set -e
         terraform init -input=false
-      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target }}
+      working-directory: ./${{ needs.discover.outputs.targets_dir }}/${{ matrix.target }}
 
     - name: Terraform Validate
       run: |
         set -e
         terraform validate
-      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target }}
+      working-directory: ./${{ needs.discover.outputs.targets_dir }}/${{ matrix.target }}
 
   # Generate destroy plan
   terraform-destroy-plan:
@@ -134,26 +122,26 @@ jobs:
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
       with:
-        terraform_version: ${{ github.event.inputs.terraform_version || 'latest' }}
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
 
     - name: Terraform Init
       run: |
         set -e
         terraform init -input=false
-      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target }}
+      working-directory: ./${{ needs.discover.outputs.targets_dir }}/${{ matrix.target }}
 
     - name: Terraform Destroy Plan
       run: |
         set -e
         terraform plan -destroy -out=destroy-plan
-      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target }}
+      working-directory: ./${{ needs.discover.outputs.targets_dir }}/${{ matrix.target }}
 
     # Save destroy plan for destroy job
     - name: Upload Destroy Plan
       uses: actions/upload-artifact@v4
       with:
         name: terraform-destroy-plan-${{ matrix.target }}
-        path: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target }}/destroy-plan
+        path: ./${{ needs.discover.outputs.targets_dir }}/${{ matrix.target }}/destroy-plan
 
   # Execute destroy (manual only)
   terraform-destroy:
@@ -178,7 +166,7 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         name: terraform-destroy-plan-${{ matrix.target }}
-        path: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target }}
+        path: ./${{ needs.discover.outputs.targets_dir }}/${{ matrix.target }}
 
     - name: Configure AWS Credentials
       uses: aws-actions/configure-aws-credentials@v4
@@ -190,16 +178,16 @@ jobs:
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
       with:
-        terraform_version: ${{ github.event.inputs.terraform_version || 'latest' }}
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
 
     - name: Terraform Init
       run: |
         set -e
         terraform init -input=false
-      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target }}
+      working-directory: ./${{ needs.discover.outputs.targets_dir }}/${{ matrix.target }}
 
     - name: Terraform Destroy
       run: |
         set -e
         terraform apply -input=false destroy-plan
-      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target }}
+      working-directory: ./${{ needs.discover.outputs.targets_dir }}/${{ matrix.target }}
