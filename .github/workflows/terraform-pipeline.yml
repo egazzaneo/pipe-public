@@ -72,7 +72,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target_dir: ${{ github.event.inputs.target_dir != '' && fromJson(format('["{}"]', github.event.inputs.target_dir)) || fromJson(needs.discover.outputs.environments) }}
+        target_dir: ${{ github.event.inputs.target_dir != '' && fromJson(format('[\"{0}\"]', github.event.inputs.target_dir)) || fromJson(needs.discover.outputs.environments) }}
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -93,13 +93,13 @@ jobs:
       run: |
         set -e
         terraform init -input=false
-      working-directory: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+      working-directory: ./environments/${{ matrix.target_dir }}
 
     - name: Terraform Validate
       run: |
         set -e
         terraform validate
-      working-directory: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+      working-directory: ./environments/${{ matrix.target_dir }}
 
   # Generate execution plan for changes
   terraform-plan:
@@ -116,7 +116,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target_dir: ${{ github.event.inputs.target_dir != '' && fromJson(format('["{}"]', github.event.inputs.target_dir)) || fromJson(needs.discover.outputs.environments) }}
+        target_dir: ${{ github.event.inputs.target_dir != '' && fromJson(format('[\"{0}\"]', github.event.inputs.target_dir)) || fromJson(needs.discover.outputs.environments) }}
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -137,20 +137,20 @@ jobs:
       run: |
         set -e
         terraform init -input=false
-      working-directory: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+      working-directory: ./environments/${{ matrix.target_dir }}
 
     - name: Terraform Plan
       run: |
         set -e
         terraform plan -out=tfplan
-      working-directory: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+      working-directory: ./environments/${{ matrix.target_dir }}
 
     # Save plan for apply job
     - name: Upload Plan
       uses: actions/upload-artifact@v4
       with:
         name: terraform-plan-${{ matrix.target_dir }}
-        path: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}/tfplan
+        path: ./environments/${{ matrix.target_dir }}/tfplan
 
   # Apply planned changes (manual only)
   terraform-apply:
@@ -165,7 +165,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target_dir: ${{ github.event.inputs.target_dir != '' && fromJson(format('["{}"]', github.event.inputs.target_dir)) || fromJson(needs.discover.outputs.environments) }}
+        target_dir: ${{ github.event.inputs.target_dir != '' && fromJson(format('[\"{0}\"]', github.event.inputs.target_dir)) || fromJson(needs.discover.outputs.environments) }}
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -175,7 +175,7 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         name: terraform-plan-${{ matrix.target_dir }}
-        path: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+        path: ./environments/${{ matrix.target_dir }}
 
     - name: Configure AWS Credentials
       uses: aws-actions/configure-aws-credentials@v4
@@ -193,10 +193,10 @@ jobs:
       run: |
         set -e
         terraform init -input=false
-      working-directory: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+      working-directory: ./environments/${{ matrix.target_dir }}
 
     - name: Terraform Apply
       run: |
         set -e
         terraform apply -input=false tfplan
-      working-directory: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+      working-directory: ./environments/${{ matrix.target_dir }}

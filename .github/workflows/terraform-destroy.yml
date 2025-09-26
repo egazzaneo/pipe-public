@@ -61,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target_dir: ${{ github.event.inputs.target_dir != '' && fromJson(format('["{}"]', github.event.inputs.target_dir)) || fromJson(needs.discover.outputs.environments) }}
+        target_dir: ${{ github.event.inputs.target_dir != '' && fromJson(format('[\"{0}\"]', github.event.inputs.target_dir)) || fromJson(needs.discover.outputs.environments) }}
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -82,13 +82,13 @@ jobs:
       run: |
         set -e
         terraform init -input=false
-      working-directory: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+      working-directory: ./environments/${{ matrix.target_dir }}
 
     - name: Terraform Validate
       run: |
         set -e
         terraform validate
-      working-directory: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+      working-directory: ./environments/${{ matrix.target_dir }}
 
   # Generate destroy plan
   terraform-destroy-plan:
@@ -103,7 +103,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target_dir: ${{ github.event.inputs.target_dir != '' && fromJson(format('["{}"]', github.event.inputs.target_dir)) || fromJson(needs.discover.outputs.environments) }}
+        target_dir: ${{ github.event.inputs.target_dir != '' && fromJson(format('[\"{0}\"]', github.event.inputs.target_dir)) || fromJson(needs.discover.outputs.environments) }}
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -124,20 +124,20 @@ jobs:
       run: |
         set -e
         terraform init -input=false
-      working-directory: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+      working-directory: ./environments/${{ matrix.target_dir }}
 
     - name: Terraform Destroy Plan
       run: |
         set -e
         terraform plan -destroy -out=destroy-plan
-      working-directory: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+      working-directory: ./environments/${{ matrix.target_dir }}
 
     # Save destroy plan for destroy job
     - name: Upload Destroy Plan
       uses: actions/upload-artifact@v4
       with:
         name: terraform-destroy-plan-${{ matrix.target_dir }}
-        path: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}/destroy-plan
+        path: ./environments/${{ matrix.target_dir }}/destroy-plan
 
   # Execute destroy (manual only)
   terraform-destroy:
@@ -152,7 +152,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target_dir: ${{ github.event.inputs.target_dir != '' && fromJson(format('["{}"]', github.event.inputs.target_dir)) || fromJson(needs.discover.outputs.environments) }}
+        target_dir: ${{ github.event.inputs.target_dir != '' && fromJson(format('[\"{0}\"]', github.event.inputs.target_dir)) || fromJson(needs.discover.outputs.environments) }}
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -162,7 +162,7 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         name: terraform-destroy-plan-${{ matrix.target_dir }}
-        path: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+        path: ./environments/${{ matrix.target_dir }}
 
     - name: Configure AWS Credentials
       uses: aws-actions/configure-aws-credentials@v4
@@ -180,10 +180,10 @@ jobs:
       run: |
         set -e
         terraform init -input=false
-      working-directory: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+      working-directory: ./environments/${{ matrix.target_dir }}
 
     - name: Terraform Destroy
       run: |
         set -e
         terraform apply -input=false destroy-plan
-      working-directory: ./${{ github.event.inputs.environments_dir || 'environments' }}/${{ matrix.target_dir }}
+      working-directory: ./environments/${{ matrix.target_dir }}
