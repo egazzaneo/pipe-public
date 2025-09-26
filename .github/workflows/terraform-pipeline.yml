@@ -1,9 +1,6 @@
 # Terraform Pipeline 
 name: 'Terraform Pipeline'
 
-env:
-  TERRAFORM_VERSION: 'latest'
-
 on:
   # Auto-trigger on changes to environments or workflows
   push:
@@ -27,7 +24,7 @@ on:
         options:
         - plan
         - apply
-      target_dir:
+      target:
         description: 'Environment to target (leave empty for all)'
         required: false
         type: string
@@ -35,6 +32,11 @@ on:
         description: 'Environments directory'
         required: false
         default: 'environments'
+        type: string
+      terraform_version:
+        description: 'Terraform version'
+        required: false
+        default: 'latest'
         type: string
 
 permissions:
@@ -46,7 +48,6 @@ jobs:
     name: 'Discover Environments'
     runs-on: ubuntu-latest
     outputs:
-      environments: ${{ steps.get-envs.outputs.environments }}
       target_array: ${{ steps.get-target.outputs.target_array }}
       environments_dir: ${{ steps.get-target.outputs.environments_dir }}
     steps:
@@ -59,7 +60,8 @@ jobs:
       id: get-envs
       shell: bash
       run: |
-        envs=$(ls -1 ${{ github.event.inputs.environments_dir || 'environments' }}/ | jq -R -s -c 'split("\n")[:-1]')
+        ENVS_DIR="${{ github.event.inputs.environments_dir || 'environments' }}"
+        envs=$(ls -1 $ENVS_DIR/ | jq -R -s -c 'split("\n")[:-1]')
         echo "environments=$envs" >> $GITHUB_OUTPUT
         echo "🔍 Discovered environments:"
         echo "$envs" | jq -r '.[]' | sed 's/^/  - /'
@@ -68,16 +70,17 @@ jobs:
       id: get-target
       shell: bash
       run: |
-        if [ -n "${{ github.event.inputs.target_dir }}" ]; then
-          echo "target_array=[\"${{ github.event.inputs.target_dir }}\"]" >> $GITHUB_OUTPUT
+        ENVS_DIR="${{ github.event.inputs.environments_dir || 'environments' }}"
+        if [ -n "${{ github.event.inputs.target }}" ]; then
+          echo "target_array=[\"${{ github.event.inputs.target }}\"]" >> $GITHUB_OUTPUT
         else
           echo "target_array=${{ steps.get-envs.outputs.environments }}" >> $GITHUB_OUTPUT
         fi
-        echo "environments_dir=${{ github.event.inputs.environments_dir || 'environments' }}" >> $GITHUB_OUTPUT
+        echo "environments_dir=$ENVS_DIR" >> $GITHUB_OUTPUT
 
   # Validate Terraform syntax and configuration
   terraform-validate:
-    name: 'Validate ${{ matrix.target_dir }}'
+    name: 'Validate ${{ matrix.target }}'
     runs-on: ubuntu-latest
     needs: discover
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -85,7 +88,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target_dir: ${{ fromJson(needs.discover.outputs.target_array) }}
+        target: ${{ fromJson(needs.discover.outputs.target_array) }}
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -100,23 +103,23 @@ jobs:
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
       with:
-        terraform_version: ${{ env.TERRAFORM_VERSION }}
+        terraform_version: ${{ github.event.inputs.terraform_version || 'latest' }}
 
     - name: Terraform Init
       run: |
         set -e
         terraform init -input=false
-      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
+      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target }}
 
     - name: Terraform Validate
       run: |
         set -e
         terraform validate
-      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
+      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target }}
 
   # Generate execution plan for changes
   terraform-plan:
-    name: 'Plan ${{ matrix.target_dir }}'
+    name: 'Plan ${{ matrix.target }}'
     runs-on: ubuntu-latest
     needs: [discover, terraform-validate]
     if: |
@@ -129,7 +132,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target_dir: ${{ fromJson(needs.discover.outputs.target_array) }}
+        target: ${{ fromJson(needs.discover.outputs.target_array) }}
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -144,30 +147,30 @@ jobs:
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
       with:
-        terraform_version: ${{ env.TERRAFORM_VERSION }}
+        terraform_version: ${{ github.event.inputs.terraform_version || 'latest' }}
 
     - name: Terraform Init
       run: |
         set -e
         terraform init -input=false
-      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
+      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target }}
 
     - name: Terraform Plan
       run: |
         set -e
         terraform plan -out=tfplan
-      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
+      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target }}
 
     # Save plan for apply job
     - name: Upload Plan
       uses: actions/upload-artifact@v4
       with:
-        name: terraform-plan-${{ matrix.target_dir }}
-        path: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}/tfplan
+        name: terraform-plan-${{ matrix.target }}
+        path: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target }}/tfplan
 
   # Apply planned changes (manual only)
   terraform-apply:
-    name: 'Apply ${{ matrix.target_dir }}'
+    name: 'Apply ${{ matrix.target }}'
     runs-on: ubuntu-latest
     needs: [discover, terraform-plan]
     if: |
@@ -178,7 +181,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target_dir: ${{ fromJson(needs.discover.outputs.target_array) }}
+        target: ${{ fromJson(needs.discover.outputs.target_array) }}
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -187,8 +190,8 @@ jobs:
     - name: Download Plan
       uses: actions/download-artifact@v4
       with:
-        name: terraform-plan-${{ matrix.target_dir }}
-        path: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
+        name: terraform-plan-${{ matrix.target }}
+        path: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target }}
 
     - name: Configure AWS Credentials
       uses: aws-actions/configure-aws-credentials@v4
@@ -200,16 +203,16 @@ jobs:
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
       with:
-        terraform_version: ${{ env.TERRAFORM_VERSION }}
+        terraform_version: ${{ github.event.inputs.terraform_version || 'latest' }}
 
     - name: Terraform Init
       run: |
         set -e
         terraform init -input=false
-      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
+      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target }}
 
     - name: Terraform Apply
       run: |
         set -e
         terraform apply -input=false tfplan
-      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
+      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target }}
