@@ -1,19 +1,14 @@
 # Terraform Pipeline 
+# Validates, plans and applies Terraform configurations across multiple targets
 name: 'Terraform Pipeline'
 
 on:
-  # Auto-trigger on changes to environments or workflows
+  # Auto-trigger on any changes to main branch
   push:
     branches: [ "main" ]
-    paths:
-      - 'environments/**'
-      - '.github/workflows/**'
   pull_request:
     branches: [ "main" ]
-    paths:
-      - 'environments/**'
-      - '.github/workflows/**'
-  # Manual trigger with action and environment selection
+  # Manual trigger for plan/apply operations
   workflow_dispatch:
     inputs:
       action:
@@ -22,8 +17,8 @@ on:
         default: 'plan'
         type: choice
         options:
-        - plan
-        - apply
+        - plan   # Generate execution plan only
+        - apply  # Apply planned changes (requires approval)
       target:
         description: 'Target to execute (leave empty for all)'
         required: false
@@ -32,18 +27,20 @@ on:
 permissions:
   contents: read
 
+# Global configuration - modify these to customize for your repository
 env:
-  TARGETS_DIR: 'environments'
-  TERRAFORM_VERSION: 'latest'
+  TARGETS_DIR: 'environments'     # Directory containing target configurations
+  TERRAFORM_VERSION: 'latest'     # Terraform version to use
 
 jobs:
-  # Find available targets dynamically
+  # Dynamically discover targets to process
+  # Either uses specified target or discovers all available targets
   discover:
     name: 'Discover Targets'
     runs-on: ubuntu-latest
     outputs:
-      target_array: ${{ steps.get-target.outputs.target_array }}
-      targets_dir: ${{ steps.get-target.outputs.targets_dir }}
+      target_array: ${{ steps.get-target.outputs.target_array }}  # JSON array of targets
+      targets_dir: ${{ steps.get-target.outputs.targets_dir }}    # Directory path
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -55,10 +52,12 @@ jobs:
       shell: bash
       run: |
         TARGETS_DIR="${{ env.TARGETS_DIR }}"
+        # Use specific target if provided, otherwise discover all
         if [ -n "${{ github.event.inputs.target }}" ]; then
           echo "🎯 Target: ${{ github.event.inputs.target }}"
           echo "target_array=[\"${{ github.event.inputs.target }}\"]" >> $GITHUB_OUTPUT
         else
+          # Scan directory and create JSON array for matrix strategy
           targets=$(ls -1 $TARGETS_DIR/ | jq -R -s -c 'split("\n")[:-1]')
           echo "🔍 Discovered targets:"
           echo "$targets" | jq -r '.[]' | sed 's/^/  - /'
@@ -66,17 +65,18 @@ jobs:
         fi
         echo "targets_dir=$TARGETS_DIR" >> $GITHUB_OUTPUT
 
-  # Validate Terraform syntax and configuration
+  # Validate Terraform syntax and configuration for each target
+  # Runs on all triggers to catch syntax errors early
   terraform-validate:
     name: 'Validate ${{ matrix.target }}'
     runs-on: ubuntu-latest
     needs: discover
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    continue-on-error: true
+    continue-on-error: true  # Allow other targets to continue if one fails
     strategy:
-      fail-fast: false
+      fail-fast: false      # Don't stop other matrix jobs on failure
       matrix:
-        target: ${{ fromJson(needs.discover.outputs.target_array) }}
+        target: ${{ fromJson(needs.discover.outputs.target_array) }}  # Process each target
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -105,11 +105,13 @@ jobs:
         terraform validate
       working-directory: ./${{ needs.discover.outputs.targets_dir }}/${{ matrix.target }}
 
-  # Generate execution plan for changes
+  # Generate execution plan showing what changes will be made
+  # Runs on push/PR for review, and manual triggers for plan/apply
   terraform-plan:
     name: 'Plan ${{ matrix.target }}'
     runs-on: ubuntu-latest
     needs: [discover, terraform-validate]
+    # Only run if validation passed and on appropriate triggers
     if: |
       (needs.terraform-validate.result == 'success' || needs.terraform-validate.result == 'skipped') && (
         github.event_name == 'push' ||
@@ -149,18 +151,23 @@ jobs:
         terraform plan -out=tfplan
       working-directory: ./${{ needs.discover.outputs.targets_dir }}/${{ matrix.target }}
 
-    # Save plan for apply job
+    # Save plan file for potential apply job
+    # Each target gets its own artifact to avoid conflicts
     - name: Upload Plan
       uses: actions/upload-artifact@v4
       with:
         name: terraform-plan-${{ matrix.target }}
         path: ./${{ needs.discover.outputs.targets_dir }}/${{ matrix.target }}/tfplan
 
-  # Apply planned changes (manual only)
+  # Apply planned changes to infrastructure (DESTRUCTIVE OPERATION)
+  # Only runs on manual trigger with 'apply' action
+  # Requires environment approval for safety
   terraform-apply:
     name: 'Apply ${{ matrix.target }}'
     runs-on: ubuntu-latest
+    environment: production  # Requires approval - configure in GitHub settings
     needs: [discover, terraform-plan]
+    # Only run if plan succeeded and user chose 'apply'
     if: |
       needs.terraform-plan.result == 'success' &&
       github.event_name == 'workflow_dispatch' &&
@@ -174,7 +181,7 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # Get plan from previous job
+    # Download the plan file created in the plan job
     - name: Download Plan
       uses: actions/download-artifact@v4
       with:

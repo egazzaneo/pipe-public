@@ -147,6 +147,7 @@ jobs:
   terraform-destroy:
     name: 'Destroy ${{ matrix.target }}'
     runs-on: ubuntu-latest
+    environment: production
     needs: [discover, terraform-destroy-plan]
     # Only run on manual destroy action
     if: |
