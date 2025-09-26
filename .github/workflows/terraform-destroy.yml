@@ -37,6 +37,7 @@ jobs:
     outputs:
       environments: ${{ steps.get-envs.outputs.environments }}
       target_array: ${{ steps.get-target.outputs.target_array }}
+      environments_dir: ${{ steps.get-target.outputs.environments_dir }}
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -61,6 +62,7 @@ jobs:
         else
           echo "target_array=${{ steps.get-envs.outputs.environments }}" >> $GITHUB_OUTPUT
         fi
+        echo "environments_dir=${{ github.event.inputs.environments_dir || 'environments' }}" >> $GITHUB_OUTPUT
 
   # Validate Terraform before destroy
   terraform-validate:
@@ -93,13 +95,13 @@ jobs:
       run: |
         set -e
         terraform init -input=false
-      working-directory: ./environments/${{ matrix.target_dir }}
+      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
 
     - name: Terraform Validate
       run: |
         set -e
         terraform validate
-      working-directory: ./environments/${{ matrix.target_dir }}
+      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
 
   # Generate destroy plan
   terraform-destroy-plan:
@@ -135,20 +137,20 @@ jobs:
       run: |
         set -e
         terraform init -input=false
-      working-directory: ./environments/${{ matrix.target_dir }}
+      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
 
     - name: Terraform Destroy Plan
       run: |
         set -e
         terraform plan -destroy -out=destroy-plan
-      working-directory: ./environments/${{ matrix.target_dir }}
+      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
 
     # Save destroy plan for destroy job
     - name: Upload Destroy Plan
       uses: actions/upload-artifact@v4
       with:
         name: terraform-destroy-plan-${{ matrix.target_dir }}
-        path: ./environments/${{ matrix.target_dir }}/destroy-plan
+        path: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}/destroy-plan
 
   # Execute destroy (manual only)
   terraform-destroy:
@@ -173,7 +175,7 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         name: terraform-destroy-plan-${{ matrix.target_dir }}
-        path: ./environments/${{ matrix.target_dir }}
+        path: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
 
     - name: Configure AWS Credentials
       uses: aws-actions/configure-aws-credentials@v4
@@ -191,10 +193,10 @@ jobs:
       run: |
         set -e
         terraform init -input=false
-      working-directory: ./environments/${{ matrix.target_dir }}
+      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
 
     - name: Terraform Destroy
       run: |
         set -e
         terraform apply -input=false destroy-plan
-      working-directory: ./environments/${{ matrix.target_dir }}
+      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}

@@ -48,6 +48,7 @@ jobs:
     outputs:
       environments: ${{ steps.get-envs.outputs.environments }}
       target_array: ${{ steps.get-target.outputs.target_array }}
+      environments_dir: ${{ steps.get-target.outputs.environments_dir }}
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -72,6 +73,7 @@ jobs:
         else
           echo "target_array=${{ steps.get-envs.outputs.environments }}" >> $GITHUB_OUTPUT
         fi
+        echo "environments_dir=${{ github.event.inputs.environments_dir || 'environments' }}" >> $GITHUB_OUTPUT
 
   # Validate Terraform syntax and configuration
   terraform-validate:
@@ -104,13 +106,13 @@ jobs:
       run: |
         set -e
         terraform init -input=false
-      working-directory: ./environments/${{ matrix.target_dir }}
+      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
 
     - name: Terraform Validate
       run: |
         set -e
         terraform validate
-      working-directory: ./environments/${{ matrix.target_dir }}
+      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
 
   # Generate execution plan for changes
   terraform-plan:
@@ -148,20 +150,20 @@ jobs:
       run: |
         set -e
         terraform init -input=false
-      working-directory: ./environments/${{ matrix.target_dir }}
+      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
 
     - name: Terraform Plan
       run: |
         set -e
         terraform plan -out=tfplan
-      working-directory: ./environments/${{ matrix.target_dir }}
+      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
 
     # Save plan for apply job
     - name: Upload Plan
       uses: actions/upload-artifact@v4
       with:
         name: terraform-plan-${{ matrix.target_dir }}
-        path: ./environments/${{ matrix.target_dir }}/tfplan
+        path: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}/tfplan
 
   # Apply planned changes (manual only)
   terraform-apply:
@@ -186,7 +188,7 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         name: terraform-plan-${{ matrix.target_dir }}
-        path: ./environments/${{ matrix.target_dir }}
+        path: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
 
     - name: Configure AWS Credentials
       uses: aws-actions/configure-aws-credentials@v4
@@ -204,10 +206,10 @@ jobs:
       run: |
         set -e
         terraform init -input=false
-      working-directory: ./environments/${{ matrix.target_dir }}
+      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
 
     - name: Terraform Apply
       run: |
         set -e
         terraform apply -input=false tfplan
-      working-directory: ./environments/${{ matrix.target_dir }}
+      working-directory: ./${{ needs.discover.outputs.environments_dir }}/${{ matrix.target_dir }}
