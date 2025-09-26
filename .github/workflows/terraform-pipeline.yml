@@ -32,6 +32,7 @@ env:
   TARGETS_DIR: 'environments'     # Directory containing target configurations
   TERRAFORM_VERSION: 'latest'     # Terraform version to use
 
+
 jobs:
   # Dynamically discover targets to process
   # Either uses specified target or discovers all available targets
